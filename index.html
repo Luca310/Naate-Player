@@ -2,7 +2,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audio Player</title>
+    <title>Naate Audio Player</title>
     <style>
         * {
             margin: 0;
@@ -110,12 +110,23 @@
         .status.error {
             color: #e74c3c;
         }
+
+        .hls-badge {
+            text-align: center;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+            font-size: 11px;
+            color: #999;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
     </style>
 </head>
 <body>
     <div class="player-container">
-        <h1 class="player-title">Audio Player</h1>
-        <p class="player-subtitle">Een Vliegende Cinema Voor Plopsaland</p>
+        <h1 class="player-title">HLS Audio Player</h1>
+        <p class="player-subtitle">Streaming Audio</p>
         
         <div class="time-display" id="timeDisplay">00:00</div>
         
@@ -124,16 +135,23 @@
             <button id="playPauseBtn" class="play-pause" title="Play">▶</button>
         </div>
         
-        <div class="status" id="status">Ready to play</div>
+        <div class="status" id="status">Initializing...</div>
+        <div class="hls-badge" id="hlsBadge">HLS Streaming</div>
     </div>
 
+    <!-- HLS.js library -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    
     <script>
-        const audio = new Audio('audio.mp3');
+        const audio = document.createElement('audio');
         const playPauseBtn = document.getElementById('playPauseBtn');
         const stopBtn = document.getElementById('stopBtn');
         const timeDisplay = document.getElementById('timeDisplay');
         const status = document.getElementById('status');
+        const hlsBadge = document.getElementById('hlsBadge');
 
+        const hlsSource = 'audio/audio.m3u8';
+        let hls;
         let isPlaying = false;
 
         // Format time as MM:SS
@@ -141,6 +159,65 @@
             const mins = Math.floor(seconds / 60);
             const secs = Math.floor(seconds % 60);
             return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // Initialize HLS
+        function initHLS() {
+            if (Hls.isSupported()) {
+                // Use hls.js for browsers that don't support HLS natively
+                hls = new Hls({
+                    enableWorker: true,
+                    lowLatencyMode: false,
+                    backBufferLength: 90
+                });
+                
+                hls.loadSource(hlsSource);
+                hls.attachMedia(audio);
+                
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    status.textContent = 'Ready to play';
+                    status.className = 'status';
+                    playPauseBtn.disabled = false;
+                    hlsBadge.textContent = 'Streaming (hls.js)';
+                });
+
+                hls.on(Hls.Events.ERROR, function(event, data) {
+                    if (data.fatal) {
+                        switch(data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                status.textContent = 'Network error';
+                                status.className = 'status error';
+                                hls.startLoad();
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                status.textContent = 'Media error';
+                                status.className = 'status error';
+                                hls.recoverMediaError();
+                                break;
+                            default:
+                                status.textContent = 'Fatal error';
+                                status.className = 'status error';
+                                hls.destroy();
+                                break;
+                        }
+                    }
+                });
+            } 
+            else if (audio.canPlayType('application/vnd.apple.mpegurl')) {
+                // Native HLS support (Safari)
+                audio.src = hlsSource;
+                audio.addEventListener('loadedmetadata', function() {
+                    status.textContent = 'Ready to play';
+                    status.className = 'status';
+                    playPauseBtn.disabled = false;
+                    hlsBadge.textContent = 'HLS Streaming (Native)';
+                });
+            }
+            else {
+                status.textContent = 'HLS not supported in this browser';
+                status.className = 'status error';
+                playPauseBtn.disabled = true;
+            }
         }
 
         // Play/Pause functionality
@@ -153,13 +230,18 @@
                 status.className = 'status';
                 isPlaying = false;
             } else {
-                audio.play();
-                playPauseBtn.textContent = '⏸';
-                playPauseBtn.title = 'Pause';
-                status.textContent = 'Playing';
-                status.className = 'status playing';
-                stopBtn.disabled = false;
-                isPlaying = true;
+                audio.play().then(() => {
+                    playPauseBtn.textContent = '⏸';
+                    playPauseBtn.title = 'Pause';
+                    status.textContent = 'Playing';
+                    status.className = 'status playing';
+                    stopBtn.disabled = false;
+                    isPlaying = true;
+                }).catch(error => {
+                    status.textContent = 'Error playing audio';
+                    status.className = 'status error';
+                    console.error('Play error:', error);
+                });
             }
         });
 
@@ -192,22 +274,35 @@
             isPlaying = false;
         });
 
-        // Handle loading
-        audio.addEventListener('loadstart', () => {
-            status.textContent = 'Loading...';
-        });
-
-        audio.addEventListener('canplay', () => {
-            if (!isPlaying) {
-                status.textContent = 'Ready to play';
+        // Handle loading states
+        audio.addEventListener('waiting', () => {
+            if (isPlaying) {
+                status.textContent = 'Buffering...';
+                status.className = 'status';
             }
         });
 
+        audio.addEventListener('playing', () => {
+            status.textContent = 'Playing';
+            status.className = 'status playing';
+        });
+
         // Handle errors
-        audio.addEventListener('error', () => {
+        audio.addEventListener('error', (e) => {
             status.textContent = 'Error loading audio';
             status.className = 'status error';
             playPauseBtn.disabled = true;
+            console.error('Audio error:', e);
+        });
+
+        // Initialize on page load
+        initHLS();
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (hls) {
+                hls.destroy();
+            }
         });
     </script>
 </body>
